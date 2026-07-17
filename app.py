@@ -47,33 +47,31 @@ CSV_COLUMNS = [
     'dominant_state',
 ]
 
+
 class DatasetRecorder:
 
     def __init__(self):
         self._session_id = None
         self._file       = None
         self._writer     = None
-        self._session_file   = None
-        self._session_writer = None
-        self._session_csv_path = None
-
         self._window = deque()
         self._last_save  = 0
-        self._row_count  = 0
-        self._total_rows = 0
+        self._row_count  = 0      # rows saved in THIS session
+        self._total_rows = 0      # total rows in the master file
         self._lock       = threading.Lock()
         self.recording   = False
         self._count_existing_rows()
 
     def _count_existing_rows(self):
+        
         if not os.path.exists(MASTER_CSV_PATH):
             self._total_rows = 0
             return
         try:
-            with open(MASTER_CSV_PATH, 'r', encoding='utf-8') as f:
-                self._total_rows = max(0, sum(1 for _ in f) - 1)
+                with open(MASTER_CSV_PATH, 'r', encoding='utf-8') as f:
+                    self._total_rows = max(0, sum(1 for _ in f) - 1)  # minus header
         except Exception:
-            self._total_rows = 0
+                self._total_rows = 0
         print(f'[Dataset] Master file has {self._total_rows} existing rows.')
 
     def start_session(self):
@@ -83,7 +81,6 @@ class DatasetRecorder:
         self._row_count  = 0
         self._last_save = time.time()
 
-        # master file (append)
         file_exists = os.path.exists(MASTER_CSV_PATH)
         self._file  = open(MASTER_CSV_PATH, 'a', newline='', encoding='utf-8')
         self._writer = csv.DictWriter(self._file, fieldnames=CSV_COLUMNS)
@@ -91,52 +88,96 @@ class DatasetRecorder:
         if not file_exists or os.path.getsize(MASTER_CSV_PATH) == 0:
             self._writer.writeheader()
             print("[Dataset] Created new dataset.")
+           
         else:
-            print(f"[Dataset] Appending to dataset ({self._total_rows} rows)")
 
-        # session-only file (new each session)
-        self._session_csv_path = os.path.join(DATASET_DIR, f'session_{self._session_id}.csv')
-        self._session_file = open(self._session_csv_path, 'w', newline='', encoding='utf-8')
-        self._session_writer = csv.DictWriter(self._session_file, fieldnames=CSV_COLUMNS)
-        self._session_writer.writeheader()
+            print(
+                f"[Dataset] Appending to dataset ({self._total_rows} rows)"
+            )
 
         self._file.flush()
-        self._session_file.flush()
         return MASTER_CSV_PATH
 
     def record(self, eye, pose, cog, session_secs):
-        if not self.recording:
+        if not self.recording :
             return
         now = time.time()
         timestamp = time.time()
         frame = {
+
             "timestamp": timestamp,
+
             "session_secs": session_secs,
+
             "ear": eye.get("smooth_ear", 0),
+
             "blink_rate": eye.get("blink_rate", 0),
+
             "blink_count": eye.get("blink_count", 0),
-            "blink_irregularity": eye.get("blink_irregularity", 0),
-            "gaze_direction": eye.get("gaze", {}).get("direction", "center"),
-            "gaze_stability": eye.get("gaze_stability", 0),
-            "off_screen_pct": eye.get("off_screen_pct", 0),
-            "head_pitch": pose.get("pitch", 0),
-            "head_yaw": pose.get("yaw", 0),
-            "head_roll": pose.get("roll", 0),
-            "head_label": pose.get("label", "upright"),
-            "head_steadiness": pose.get("steadiness", 0),
-            "focus_score": cog.get("score", 0),
-            "avg_score": cog.get("avg_score", 0),
-            "confidence": cog.get("confidence", 0),
-            "signals": cog.get("signal_scores", {}),
-            "state": cog.get("state", "focused"),
-            "ear_baseline": eye.get("ear_baseline", 0),
-            "blink_threshold": eye.get("blink_threshold", 0),
-            "drowsy_threshold": eye.get("drowsy_threshold", 0)
+
+            "blink_irregularity":
+                eye.get("blink_irregularity", 0),
+
+            "gaze_direction":
+                eye.get("gaze", {}).get(
+                    "direction",
+                    "center"
+                ),
+
+            "gaze_stability":
+                eye.get("gaze_stability", 0),
+
+            "off_screen_pct":
+                eye.get("off_screen_pct", 0),
+
+            "head_pitch":
+                pose.get("pitch", 0),
+
+            "head_yaw":
+                pose.get("yaw", 0),
+
+            "head_roll":
+                pose.get("roll", 0),
+
+            "head_label":
+                pose.get("label", "upright"),
+
+            "head_steadiness":
+                pose.get("steadiness", 0),
+
+            "focus_score":
+                cog.get("score", 0),
+
+            "avg_score":
+                cog.get("avg_score", 0),
+
+            "confidence":
+                cog.get("confidence", 0),
+
+            "signals":
+                cog.get("signal_scores", {}),
+
+            "state":
+                cog.get("state", "focused"),
+            "ear_baseline":
+                eye.get("ear_baseline", 0),
+
+            "blink_threshold":
+                eye.get("blink_threshold", 0),
+
+            "drowsy_threshold":
+                eye.get("drowsy_threshold", 0)
+
+
         }
 
         self._window.append(frame)
 
-        while self._window and now - self._window[0]["timestamp"] > WINDOW_SECONDS:
+        while (
+            self._window and
+            now - self._window[0]["timestamp"] > WINDOW_SECONDS
+        ):
+
             self._window.popleft()
 
         if timestamp - self._last_save >= SAVE_INTERVAL:
@@ -144,24 +185,77 @@ class DatasetRecorder:
             self._last_save = timestamp
 
     def _extract_window_features(self):
+
         if len(self._window) == 0:
             return None
 
         ears = [x["ear"] for x in self._window]
+
         blink_rates = [f["blink_rate"] for f in self._window]
-        blink_irregularity = [f["blink_irregularity"] for f in self._window]
-        gaze_stability = [f["gaze_stability"] for f in self._window]
-        off_screen = [f["off_screen_pct"] for f in self._window]
-        head_pitch = [f["head_pitch"] for f in self._window]
-        head_yaw = [f["head_yaw"] for f in self._window]
-        head_roll = [f["head_roll"] for f in self._window]
-        head_steadiness = [f["head_steadiness"] for f in self._window]
-        focus_scores = [f["focus_score"] for f in self._window]
-        avg_scores = [f["avg_score"] for f in self._window]
-        confidence = [f["confidence"] for f in self._window]
-        ear_baselines = [f["ear_baseline"] for f in self._window]
-        blink_thresholds = [f["blink_threshold"] for f in self._window]
-        drowsy_thresholds = [f["drowsy_threshold"] for f in self._window]
+
+        blink_irregularity = [
+            f["blink_irregularity"]
+            for f in self._window
+        ]
+
+        gaze_stability = [
+            f["gaze_stability"]
+            for f in self._window
+        ]
+
+        off_screen = [
+            f["off_screen_pct"]
+            for f in self._window
+        ]
+
+        head_pitch = [
+            f["head_pitch"]
+            for f in self._window
+        ]
+
+        head_yaw = [
+            f["head_yaw"]
+            for f in self._window
+        ]
+
+        head_roll = [
+            f["head_roll"]
+            for f in self._window
+        ]
+
+        head_steadiness = [
+            f["head_steadiness"]
+            for f in self._window
+        ]
+
+        focus_scores = [
+            f["focus_score"]
+            for f in self._window
+        ]
+
+        avg_scores = [
+            f["avg_score"]
+            for f in self._window
+        ]
+
+        confidence = [
+            f["confidence"]
+            for f in self._window
+        ]
+        ear_baselines = [
+            f["ear_baseline"]
+            for f in self._window
+        ]
+
+        blink_thresholds = [
+            f["blink_threshold"]
+            for f in self._window
+        ]
+
+        drowsy_thresholds = [
+            f["drowsy_threshold"]
+            for f in self._window
+        ]
 
         signal_ear = []
         signal_blink = []
@@ -174,65 +268,153 @@ class DatasetRecorder:
         head_labels = []
 
         for frame in self._window:
+
             states.append(frame["state"])
-            gaze_direction.append(frame["gaze_direction"])
-            head_labels.append(frame["head_label"])
+
+            gaze_direction.append(
+                frame["gaze_direction"]
+            )
+
+            head_labels.append(
+                frame["head_label"]
+            )
+
             signals = frame["signals"]
-            signal_ear.append(signals.get("ear", 0))
-            signal_blink.append(signals.get("blink_rate", 0))
-            signal_gaze.append(signals.get("gaze_stability", 0))
-            signal_head.append(signals.get("head_steadiness", 0))
-            signal_pattern.append(signals.get("blink_pattern", 0))
+
+            signal_ear.append(
+                signals.get("ear", 0)
+            )
+
+            signal_blink.append(
+                signals.get("blink_rate", 0)
+            )
+
+            signal_gaze.append(
+                signals.get("gaze_stability", 0)
+            )
+
+            signal_head.append(
+                signals.get("head_steadiness", 0)
+            )
+
+            signal_pattern.append(
+                signals.get("blink_pattern", 0)
+            )
 
         row = {
-            "session_id": self._session_id,
-            "window_start": datetime.fromtimestamp(self._window[0]["timestamp"]).strftime("%Y-%m-%d %H:%M:%S"),
-            "window_end": datetime.fromtimestamp(self._window[-1]["timestamp"]).strftime("%Y-%m-%d %H:%M:%S"),
-            "mean_ear": round(np.mean(ears),4),
-            "std_ear": round(np.std(ears),4),
-            "min_ear": round(np.min(ears),4),
-            "max_ear": round(np.max(ears),4),
-            "blink_count": int(self._window[-1]["blink_count"]),
-            "blink_rate": round(np.mean(blink_rates),2),
-            "blink_irregularity": round(np.mean(blink_irregularity),3),
-            "gaze_direction": Counter(gaze_direction).most_common(1)[0][0],
-            "gaze_stability": round(np.mean(gaze_stability),2),
-            "off_screen_pct": round(np.mean(off_screen),2),
-            "head_pitch": round(np.mean(head_pitch),2),
-            "head_yaw": round(np.mean(head_yaw),2),
-            "head_roll": round(np.mean(head_roll),2),
-            "head_label": Counter(head_labels).most_common(1)[0][0],
-            "head_steadiness": round(np.mean(head_steadiness),2),
-            "focus_score": round(np.mean(focus_scores),2),
-            "avg_score": round(np.mean(avg_scores),2),
-            "confidence": round(np.mean(confidence),1),
-            "ear_baseline": round(np.mean(ear_baselines),4),
-            "blink_threshold": round(np.mean(blink_thresholds),4),
-            "drowsy_threshold": round(np.mean(drowsy_thresholds),4),
-            "sig_ear": round(np.mean(signal_ear),2),
-            "sig_blink_rate": round(np.mean(signal_blink),2),
-            "sig_gaze": round(np.mean(signal_gaze),2),
-            "sig_head": round(np.mean(signal_head),2),
-            "sig_blink_pattern": round(np.mean(signal_pattern),2),
-            "dominant_state": Counter(states).most_common(1)[0][0]
+
+            "session_id":
+                self._session_id,
+
+            "window_start":
+                datetime.fromtimestamp(
+                    self._window[0]["timestamp"]
+                ).strftime("%Y-%m-%d %H:%M:%S"),
+
+            "window_end":
+                datetime.fromtimestamp(
+                    self._window[-1]["timestamp"]
+                ).strftime("%Y-%m-%d %H:%M:%S"),
+
+            "mean_ear":
+                round(np.mean(ears),4),
+
+            "std_ear":
+                round(np.std(ears),4),
+
+            "min_ear":
+                round(np.min(ears),4),
+            "max_ear":
+                round(np.max(ears),4),
+
+            "blink_count":
+                int(self._window[-1]["blink_count"]),
+
+            "blink_rate":
+                round(np.mean(blink_rates),2),
+
+            "blink_irregularity":
+                round(np.mean(blink_irregularity),3),
+
+            "gaze_direction":
+                Counter(gaze_direction).most_common(1)[0][0],
+
+            "gaze_stability":
+                round(np.mean(gaze_stability),2),
+
+            "off_screen_pct":
+                round(np.mean(off_screen),2),
+
+            "head_pitch":
+                round(np.mean(head_pitch),2),
+
+            "head_yaw":
+                round(np.mean(head_yaw),2),
+
+            "head_roll":
+                round(np.mean(head_roll),2),
+
+            "head_label":
+                Counter(head_labels).most_common(1)[0][0],
+
+            "head_steadiness":
+                round(np.mean(head_steadiness),2),
+
+            "focus_score":
+                round(np.mean(focus_scores),2),
+
+            "avg_score":
+                round(np.mean(avg_scores),2),
+
+            "confidence":
+                round(np.mean(confidence),1),
+
+            "ear_baseline":
+                round(np.mean(ear_baselines),4),
+
+            "blink_threshold":
+                round(np.mean(blink_thresholds),4),
+
+            "drowsy_threshold":
+                round(np.mean(drowsy_thresholds),4),
+
+            "sig_ear":
+                round(np.mean(signal_ear),2),
+
+            "sig_blink_rate":
+                round(np.mean(signal_blink),2),
+
+            "sig_gaze":
+                round(np.mean(signal_gaze),2),
+
+            "sig_head":
+                round(np.mean(signal_head),2),
+
+            "sig_blink_pattern":
+                round(np.mean(signal_pattern),2),
+
+            "dominant_state":
+                Counter(states).most_common(1)[0][0]
+
         }
         return row
 
+        
     def _save_window(self):
+
         row = self._extract_window_features()
+
         if row is None:
             return
 
         with self._lock:
+
             self._writer.writerow(row)
-            if self._session_writer:
-                self._session_writer.writerow(row)
 
             self._file.flush()
-            if self._session_file:
-                self._session_file.flush()
 
             self._row_count += 1
+
             self._total_rows += 1
 
     def stop_session(self):
@@ -240,10 +422,10 @@ class DatasetRecorder:
         if self._file is not None:
             self._file.close()
             self._file = None
-        if self._session_file is not None:
-            self._session_file.close()
-            self._session_file = None
-        print(f"[Dataset] Session finished ({self._row_count} new rows)")
+        print(
+            f"[Dataset] Session finished "
+            f"({self._row_count} new rows)"
+        )
         return self._row_count, self._total_rows
 
     def get_stats(self):
@@ -255,9 +437,23 @@ class DatasetRecorder:
             'file':          'dataset/master_dataset.csv',
             'recording':     self.recording,
         }
+    def reset(self):
 
-    def get_session_csv_path(self):
-        return self._session_csv_path
+        self.recording = False
+
+        self._window.clear()
+
+        self._session_id = None
+
+        self._last_save = 0
+
+        self._row_count = 0
+
+        if self._file is not None:
+
+            self._file.close()
+
+            self._file = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1087,15 +1283,6 @@ def download_dataset():
 def toggle_voice():
     voice.enabled = not voice.enabled
     return jsonify({'voice_enabled':voice.enabled})
-
-@app.route('/api/dataset/download/session')
-def download_session_dataset():
-    path = recorder.get_session_csv_path()
-    if not path or not os.path.exists(path):
-        return jsonify({'error':'No session dataset yet'}),404
-    return send_file(path, as_attachment=True,
-                     download_name='session_dataset.csv',
-                     mimetype='text/csv')
 
 @app.route('/video_feed')
 def video_feed():
